@@ -5,28 +5,21 @@
 #include "esp_log.h"
 #include "mqtt_client.h"
 #include "nvs_flash.h"
-#include "dht.h"
+#include <stdlib.h>
+#include <time.h>
 
 #define TAG "APP"
-#define DHT_PIN GPIO_NUM_4
 #define SAMPLE_PERIOD_SEC 30
-
-/* main.c */
 
 extern const uint8_t AmazonRootCA1_pem_start[]  asm("_binary_AmazonRootCA1_pem_start");
 extern const uint8_t AmazonRootCA1_pem_end[]    asm("_binary_AmazonRootCA1_pem_end");
 
-extern const uint8_t humidity_sensor_cert_pem_start[]
-    asm("_binary_humidity_sensor_cert_pem_start");
-extern const uint8_t humidity_sensor_cert_pem_end[]
-    asm("_binary_humidity_sensor_cert_pem_end");
+extern const uint8_t humidity_sensor_cert_pem_start[] asm("_binary_humidity_sensor_cert_pem_start");
+extern const uint8_t humidity_sensor_cert_pem_end[]   asm("_binary_humidity_sensor_cert_pem_end");
 
-extern const uint8_t humidity_sensor_private_key_start[]
-    asm("_binary_humidity_sensor_private_key_start");
-extern const uint8_t humidity_sensor_private_key_end[]
-    asm("_binary_humidity_sensor_private_key_end");
+extern const uint8_t humidity_sensor_private_key_start[] asm("_binary_humidity_sensor_private_key_start");
+extern const uint8_t humidity_sensor_private_key_end[]   asm("_binary_humidity_sensor_private_key_end");
 
-/* ── Wi-Fi helper ────────────────────────────────── */
 static void wifi_connect(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -51,23 +44,36 @@ static void wifi_connect(void)
     ESP_ERROR_CHECK(esp_wifi_connect());
 }
 
-/* task de lectura + publish */
+// Simulación de humedad (valor entre 30.0 y 90.0)
+float get_simulated_humidity()
+{
+    float min = 30.0;
+    float max = 90.0;
+    return min + ((float)rand() / (float)(RAND_MAX)) * (max - min);
+}
+
+float get_simulated_temperature()
+{
+    float min = 20.0;
+    float max = 40.0;
+    return min + ((float)rand() / (float)(RAND_MAX)) * (max - min);
+}
+
 static void sensor_task(void *arg)
 {
     esp_mqtt_client_handle_t client = (esp_mqtt_client_handle_t)arg;
-    int16_t temp = 0, hum = 0;
 
     while (true) {
-        if (dht_read_data(DHT_TYPE_DHT11, DHT_PIN, &hum, &temp) == ESP_OK) {
-            char payload[64];
-            snprintf(payload, sizeof(payload),
-                     "{\"T\":%.1f,\"H\":%.1f}",
-                     temp / 10.0f, hum / 10.0f);
-            esp_mqtt_client_publish(client, "sensors/humidity", payload, 0, 1, 0);
-            ESP_LOGI(TAG, "Publicado: %s", payload);
-        } else {
-            ESP_LOGW(TAG, "Fallo leyendo DHT11");
-        }
+        float hum = get_simulated_humidity();
+        float temp = get_simulated_temperature();
+
+        char payload[64];
+        snprintf(payload, sizeof(payload),
+                 "{\"T\":%.1f,\"H\":%.1f}", temp, hum);
+
+        esp_mqtt_client_publish(client, "sensors/humidity", payload, 0, 1, 0);
+        ESP_LOGI(TAG, "Publicado (simulado): %s", payload);
+
         vTaskDelay(pdMS_TO_TICKS(SAMPLE_PERIOD_SEC * 1000));
     }
 }
@@ -75,20 +81,18 @@ static void sensor_task(void *arg)
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
+    srand((unsigned int)time(NULL)); // Inicializar semilla aleatoria
     wifi_connect();
 
     const esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri       = "mqtts://"AWS_ENDPOINT,
         .broker.verification.certificate = (const char *)AmazonRootCA1_pem_start,
-        .broker.verification.certificate_len = AmazonRootCA1_pem_end -
-                                               AmazonRootCA1_pem_start,
+        .broker.verification.certificate_len = AmazonRootCA1_pem_end - AmazonRootCA1_pem_start,
 
         .credentials.authentication.certificate = (const char *)humidity_sensor_cert_pem_start,
-        .credentials.authentication.certificate_len = humidity_sensor_cert_pem_end -
-                                                      humidity_sensor_cert_pem_start,
+        .credentials.authentication.certificate_len = humidity_sensor_cert_pem_end - humidity_sensor_cert_pem_start,
         .credentials.authentication.key = (const char *)humidity_sensor_private_key_start,
-        .credentials.authentication.key_len = humidity_sensor_private_key_end -
-                                               humidity_sensor_private_key_start,
+        .credentials.authentication.key_len = humidity_sensor_private_key_end - humidity_sensor_private_key_start,
 
         .session.keepalive = 60,
         .credentials.client_id = "humidity_sensor"
