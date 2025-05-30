@@ -1,5 +1,0 @@
-mcp9808 - Driver for MCP9808 digital temperature sensor
-=======================================================
-
-.. doxygengroup:: mcp9808
-
